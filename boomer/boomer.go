@@ -117,6 +117,8 @@ func (b *Boomer) makeRequest(c *http.Client) {
 	if err != nil {
 		fmt.Println(err)
 	}
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.ContentLength = int64(len(request.Req))
 
 	resp, err := c.Do(cloneRequest(req, request.Req))
 	if err == nil {
