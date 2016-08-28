@@ -15,6 +15,7 @@
 package main
 
 import (
+	"encoding/json"
 	"flag"
 	"fmt"
 	"net/http"
@@ -22,9 +23,10 @@ import (
 	"os"
 	"regexp"
 	"runtime"
-	"strings"
 
 	"github.com/rakyll/boom/boomer"
+	lane "gopkg.in/oleiade/lane.v1"
+	"gopkg.in/olivere/elastic.v1"
 )
 
 const (
@@ -52,6 +54,7 @@ var (
 	contentType = flag.String("T", "text/html", "")
 	authHeader  = flag.String("a", "", "")
 	hostHeader  = flag.String("host", "", "")
+	urlPrefix   = flag.String("prefix", "http://localhost", "")
 
 	output = flag.String("o", "", "")
 
@@ -69,6 +72,8 @@ var (
 	proxyAddr          = flag.String("x", "", "")
 )
 
+var queue *lane.Queue = lane.NewQueue()
+
 var usage = `Usage: boom [options...] <url>
 
 Options:
@@ -80,7 +85,6 @@ Options:
       "csv" is the only supported alternative. Dumps the response
       metrics in comma-seperated values format.
 
-  -m  HTTP method, one of GET, POST, PUT, DELETE, HEAD, OPTIONS.
   -H  Custom HTTP header. You can specify as many as needed by repeating the flag.
       for example, -H "Accept: text/html" -H "Content-Type: application/xml" .
   -t  Timeout in ms.
@@ -98,6 +102,7 @@ Options:
   -cpus                 Number of used cpu cores.
                         (default for current machine is %d cores)
   -host                 HTTP Host header.
+  -prefix               Server prefix (prepend on your Elasticsearch URL)
 `
 
 func main() {
@@ -125,8 +130,8 @@ func main() {
 		usageAndExit("n cannot be less than c")
 	}
 
+	// Elasticsearch URL
 	url := flag.Args()[0]
-	method := strings.ToUpper(*m)
 
 	// set content-type
 	header := make(http.Header)
@@ -148,16 +153,6 @@ func main() {
 		header.Set("Accept", *accept)
 	}
 
-	// set basic auth if set
-	var username, password string
-	if *authHeader != "" {
-		match, err := parseInputWithRegexp(*authHeader, authRegexp)
-		if err != nil {
-			usageAndExit(err.Error())
-		}
-		username, password = match[1], match[2]
-	}
-
 	if *output != "csv" && *output != "" {
 		usageAndExit("Invalid output type; only csv is supported.")
 	}
@@ -171,23 +166,29 @@ func main() {
 		}
 	}
 
-	req, err := http.NewRequest(method, url, nil)
+	client, err := elastic.NewClient(http.DefaultClient, url)
 	if err != nil {
 		usageAndExit(err.Error())
 	}
-	req.Header = header
-	if username != "" || password != "" {
-		req.SetBasicAuth(username, password)
-	}
+	searchResult, err := client.Search().
+		Index("logstash-*").
+		Query(elastic.NewTermQuery("uri", "v2")).
+		From(0).Size(num).
+		Pretty(true).
+		Do()
 
-	// set host header if set
-	if *hostHeader != "" {
-		req.Host = *hostHeader
+	// Queue hits
+	if searchResult.Hits != nil {
+		for _, hit := range searchResult.Hits.Hits {
+			var req *boomer.ESRequest
+			json.Unmarshal(*hit.Source, &req)
+			queue.Enqueue(req)
+		}
 	}
 
 	(&boomer.Boomer{
-		Request:            req,
-		RequestBody:        *body,
+		Queue:              queue,
+		Prefix:             *urlPrefix,
 		N:                  num,
 		C:                  conc,
 		Qps:                q,
