@@ -24,7 +24,7 @@ import (
 	"regexp"
 	"runtime"
 
-	"github.com/rakyll/boom/boomer"
+	"github.com/knabben/kaboom/boomer"
 	lane "gopkg.in/oleiade/lane.v1"
 	"gopkg.in/olivere/elastic.v1"
 )
