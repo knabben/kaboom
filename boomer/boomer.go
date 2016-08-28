@@ -17,6 +17,7 @@ package boomer
 
 import (
 	"crypto/tls"
+	"fmt"
 	"io"
 	"io/ioutil"
 	"net/http"
@@ -28,6 +29,7 @@ import (
 	"time"
 
 	"golang.org/x/net/http2"
+	lane "gopkg.in/oleiade/lane.v1"
 )
 
 type result struct {
@@ -38,10 +40,11 @@ type result struct {
 }
 
 type Boomer struct {
-	// Request is the request to be made.
-	Request *http.Request
+	// A queue of URI from ES
+	Queue *lane.Queue
 
-	RequestBody string
+	// Prefix your ES URL
+	Prefix string
 
 	// N is the total number of requests to make.
 	N int
@@ -75,6 +78,12 @@ type Boomer struct {
 	results chan *result
 }
 
+type ESRequest struct {
+	URI    string
+	Method string
+	Req    string
+}
+
 // Run makes all the requests, prints the summary. It blocks until
 // all work is done.
 func (b *Boomer) Run() {
@@ -101,7 +110,15 @@ func (b *Boomer) makeRequest(c *http.Client) {
 	var size int64
 	var code int
 
-	resp, err := c.Do(cloneRequest(b.Request, b.RequestBody))
+	request := b.Queue.Dequeue().(*ESRequest)
+
+	url := b.Prefix + request.URI
+	req, err := http.NewRequest(request.Method, url, nil)
+	if err != nil {
+		fmt.Println(err)
+	}
+
+	resp, err := c.Do(cloneRequest(req, request.Req))
 	if err == nil {
 		size = resp.ContentLength
 		code = resp.StatusCode
